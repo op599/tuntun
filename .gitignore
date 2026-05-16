@@ -1,0 +1,12 @@
+.DS_Store
+.build/
+.swiftpm/
+*.xcodeproj/
+Tuntun.app/
+*.dmg
+*.tar.gz
+
+# editor
+.vscode/
+.idea/
+*.sw?

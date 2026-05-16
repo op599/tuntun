@@ -1,0 +1,51 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build universal .app + dmg
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Select Xcode
+        run: sudo xcode-select -s /Applications/Xcode.app
+
+      - name: Build .app (arm64 + x86_64 universal)
+        run: |
+          make bundle VERSION=${GITHUB_REF_NAME#v}
+
+      - name: Create DMG
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          hdiutil create -volname "Tuntun ${VERSION}" \
+              -srcfolder Tuntun.app \
+              -ov -format UDZO \
+              "Tuntun_${VERSION}.dmg"
+          shasum -a 256 "Tuntun_${VERSION}.dmg"
+
+      - name: Tar .app for archive
+        run: |
+          VERSION=${GITHUB_REF_NAME#v}
+          tar -czf "Tuntun_${VERSION}.app.tar.gz" Tuntun.app
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          name: "囤囤 ${{ github.ref_name }}"
+          body: |
+            macOS 菜单栏图标收纳工具 (Swift + SwiftUI 重写)。
+
+            首次打开请到 *系统设置 → 隐私与安全* 允许运行 (应用未签名)。
+
+            **首次拖到右边**: 按 ⌘ 拖菜单栏的 `▸` 按钮到最右 (紧挨 Wi-Fi/电池/时钟左侧), macOS 自动记住位置。
+          draft: true
+          files: |
+            Tuntun_*.dmg
+            Tuntun_*.app.tar.gz
