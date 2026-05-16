@@ -1,20 +1,22 @@
 import AppKit
 
-/// 单 NSStatusItem 设计:
-///   - 展开态: length = 28pt, button 显示 "▸"
-///   - 折叠态: length = 10000pt, button 显示 "▾", alignment=.right 让 ▾ 贴右边
-///     macOS 会把我左边的其它 status item 挤出可见区域 (经典 HiddenBar/Ice/Dozer 方案)
-///   - autosaveName: 用户 ⌘+drag 拖到的位置永久保存
+/// 双 NSStatusItem 架构 (HiddenBar / Ice 通用方案):
+///   - button:    可见的 click 按钮, length = variable (≈28pt), 位置固定
+///   - separator: 隐形分隔符, length 在 1pt ↔ 10000pt 切换实现"折叠/展开"
+///                折叠时 separator 撑大 → 把它左侧 (= button 左侧) 的其它 app 图标挤出可见区
+///   - 两个 item 都设 autosaveName, ⌘+drag 拖到的位置永久保存
+///   - macOS 会把 length=10000 clamp 到约 5000, 但够把屏幕宽度都吃掉
 @MainActor
 final class StatusBarController {
-    private let item: NSStatusItem
-    private(set) var isCollapsed: Bool = false
+    private let button: NSStatusItem
+    private let separator: NSStatusItem
+    private(set) var isCollapsed = false
 
     private let onToggle: (Bool) -> Void
     private let onRightClick: () -> Void
 
-    private static let lenExpanded: CGFloat = 28
-    private static let lenCollapsed: CGFloat = 10_000
+    private static let separatorExpanded: CGFloat = 1
+    private static let separatorCollapsed: CGFloat = 10_000
 
     init(initialCollapsed: Bool,
          onToggle: @escaping (Bool) -> Void,
@@ -23,30 +25,34 @@ final class StatusBarController {
         self.onRightClick = onRightClick
 
         let bar = NSStatusBar.system
-        let item = bar.statusItem(withLength: Self.lenExpanded)
-        item.autosaveName = "com.op599.tuntun.toggle"
-        self.item = item
 
-        if let button = item.button {
-            button.title = initialCollapsed ? "▾" : "▸"
-            button.alignment = .right
-            button.font = NSFont.systemFont(ofSize: 14, weight: .medium)
-            button.target = self
-            button.action = #selector(handleClick(_:))
-            button.sendAction(on: [.leftMouseUp, .rightMouseUp])
-        }
+        // 1) 按钮先创建 (=> 在菜单栏的最右端, 离系统区最近)
+        button = bar.statusItem(withLength: NSStatusItem.variableLength)
+        button.autosaveName = "com.op599.tuntun.button"
+        button.button?.title = initialCollapsed ? "▾" : "▸"
+        button.button?.font = NSFont.systemFont(ofSize: 14, weight: .medium)
 
-        if initialCollapsed {
-            apply(collapsed: true, fireCallback: false)
+        // 2) 分隔符后创建 (=> 在按钮的左侧). 它撑大时把更左侧的图标挤出
+        separator = bar.statusItem(withLength: initialCollapsed ? Self.separatorCollapsed : Self.separatorExpanded)
+        separator.autosaveName = "com.op599.tuntun.separator"
+        separator.button?.title = ""
+
+        isCollapsed = initialCollapsed
+
+        // 所有 stored property 都初始化后, 再 wire 按钮 target/action (Swift 规定)
+        if let btn = button.button {
+            btn.target = self
+            btn.action = #selector(handleClick(_:))
+            btn.sendAction(on: [.leftMouseUp, .rightMouseUp])
         }
     }
 
     @objc private func handleClick(_ sender: Any?) {
         let evt = NSApp.currentEvent
         let isRight = evt?.type == .rightMouseUp || evt?.type == .rightMouseDown
-        let isCtrlClick = (evt?.modifierFlags.contains(.control) ?? false)
+        let isCtrl = (evt?.modifierFlags.contains(.control) ?? false)
             && (evt?.type == .leftMouseUp || evt?.type == .leftMouseDown)
-        if isRight || isCtrlClick {
+        if isRight || isCtrl {
             onRightClick()
         } else {
             toggleCollapsed()
@@ -54,20 +60,20 @@ final class StatusBarController {
     }
 
     func toggleCollapsed() {
-        apply(collapsed: !isCollapsed, fireCallback: true)
+        apply(collapsed: !isCollapsed, fire: true)
     }
 
-    private func apply(collapsed: Bool, fireCallback: Bool) {
+    private func apply(collapsed: Bool, fire: Bool) {
         isCollapsed = collapsed
-        item.length = collapsed ? Self.lenCollapsed : Self.lenExpanded
-        item.button?.title = collapsed ? "▾" : "▸"
-        if fireCallback { onToggle(collapsed) }
+        separator.length = collapsed ? Self.separatorCollapsed : Self.separatorExpanded
+        button.button?.title = collapsed ? "▾" : "▸"
+        if fire { onToggle(collapsed) }
     }
 
     /// pt from the right edge of the main screen to the right edge of our button.
     /// Returns -1 if not available.
     func distanceFromRightEdge() -> CGFloat {
-        guard let window = item.button?.window else { return -1 }
+        guard let window = button.button?.window else { return -1 }
         guard let screen = NSScreen.main else { return -1 }
         let buttonRightX = window.frame.maxX
         let screenRightX = screen.frame.maxX
